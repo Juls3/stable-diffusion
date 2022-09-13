@@ -1,6 +1,5 @@
 import argparse
 import os
-import random
 import re
 import time
 from contextlib import nullcontext
@@ -39,18 +38,12 @@ def load_model_from_config(ckpt, verbose=False):
 
 
 def get_image(opt, model, modelCS, modelFS, prompt=None):
-    tic = time.time()
     start_code = None
     if opt.fixed_code:
-        start_code = torch.randn([opt.num_images, opt.C, opt.height // opt.f, opt.width // opt.f], device=opt.device)
-
-    try:
-        opt.seed
-    except:
-        opt.seed = randint(0, 1000000)
+        start_code = torch.randn([opt.n_samples, opt.C, opt.H // opt.f, opt.W // opt.f], device=opt.device)
 
     speed_mp = opt.speed_mp
-    batch_size = opt.num_images
+    batch_size = opt.n_samples
     if not opt.from_file and prompt is None:
         prompt = opt.prompt
         assert prompt is not None
@@ -73,7 +66,7 @@ def get_image(opt, model, modelCS, modelFS, prompt=None):
         all_samples = list()
         for _ in trange(opt.n_iter, desc="Sampling"):
             for prompts in tqdm(data, desc="data"):
-                sample_path = os.path.join(opt.outpath, "_".join(re.split(":| ", prompts[0])))[:150]
+                sample_path = os.path.join(outpath, "_".join(re.split(":| ", prompts[0])))[:150]
                 os.makedirs(sample_path, exist_ok=True)
                 base_count = len(os.listdir(sample_path))
 
@@ -98,7 +91,7 @@ def get_image(opt, model, modelCS, modelFS, prompt=None):
                     else:
                         c = modelCS.get_learned_conditioning(prompts)
 
-                    shape = [opt.num_images, opt.C, opt.height // opt.f, opt.width // opt.f]
+                    shape = [opt.n_samples, opt.C, opt.H // opt.f, opt.W // opt.f]
 
                     if opt.device != "cpu":
                         mem = torch.cuda.memory_allocated() / 1e6
@@ -148,8 +141,12 @@ def get_image(opt, model, modelCS, modelFS, prompt=None):
                 "Samples finished in {0:.2f} minutes"
         ).format(time_taken)
     )
-    return all_samples
-    # return Image.fromarray(grid.astype(np.uint8))
+
+    grid = torch.cat(all_samples, 0)
+    grid = make_grid(grid, nrow=opt.n_iter)
+    grid = 255.0 * rearrange(grid, "c h w -> h w c").cpu().numpy()
+
+    return Image.fromarray(grid.astype(np.uint8))
 
 
 if __name__ == '__main__':
@@ -302,14 +299,10 @@ if __name__ == '__main__':
         default="plms",
     )
     opt = parser.parse_args()
-    opt.num_images = opt.n_samples
-    opt.height = opt.H
-    opt.width = opt.W
 
     tic = time.time()
     os.makedirs(opt.outdir, exist_ok=True)
     outpath = opt.outdir
-    opt.outpath = outpath
     grid_count = len(os.listdir(outpath)) - 1
 
     if opt.seed is None:
@@ -360,17 +353,12 @@ if __name__ == '__main__':
         _model.half()
         _modelCS.half()
 
-    all_samples = get_image(
+    get_image(
         opt,
         _model,
         _modelCS,
         _modelFS
-    )
-
-    grid = torch.cat(all_samples, 0)
-    grid = make_grid(grid, nrow=opt.n_iter)
-    grid = 255.0 * rearrange(grid, "c h w -> h w c").cpu().numpy()
-    Image.fromarray(grid.astype(np.uint8)).save(
+    ).save(
         os.path.join(outpath + "/" + str(opt.prompt).replace("/", "")[:100] + f".{opt.format}")
     )
     print("exported to", outpath + "/" + str(opt.prompt).replace("/", "")[:100] + f".{opt.format}")
